@@ -1,9 +1,10 @@
 class Sphere {
-    constructor(center, radius, color, specular) {
+    constructor(center, radius, color, specular, reflective) {
         this.center = center;
         this.radius = radius;
         this.color = color;
         this.specular = specular;
+        this.reflective = reflective;
     }
 }
 
@@ -35,10 +36,10 @@ const O = {
 
 const BACKGROUND_COLOR = { r: 255, g: 255, b: 255 }
 
-const sphereA = new Sphere({ x: 0, y: -1, z: 3 }, 1, { r: 255, g: 0, b: 0 }, 500)
-const sphereB = new Sphere({ x: 2, y: 0, z: 4 }, 1, { r: 0, g: 0, b: 255 }, 500)
-const sphereC = new Sphere({ x: -2, y: 0, z: 4 }, 1, { r: 0, g: 255, b: 0 }, 10)
-const sphereD = new Sphere({ x: 0, y: -5001, z: 0 }, 5000, { r: 255, g: 255, b: 0 }, 1000)
+const sphereA = new Sphere({ x: 0, y: -1, z: 3 }, 1, { r: 255, g: 0, b: 0 }, 500, 0.2)
+const sphereB = new Sphere({ x: 2, y: 0, z: 4 }, 1, { r: 0, g: 0, b: 255 }, 500, 0.3)
+const sphereC = new Sphere({ x: -2, y: 0, z: 4 }, 1, { r: 0, g: 255, b: 0 }, 10, 0.4)
+const sphereD = new Sphere({ x: 0, y: -5001, z: 0 }, 5000, { r: 255, g: 255, b: 0 }, 1000, 0.5)
 
 const spheres = [sphereA, sphereB, sphereC, sphereD]
 
@@ -103,15 +104,25 @@ const computeLighting = (P, N, V, specular) => {
             i += light.intensity;
         } else {
             let L = { x: 0, y: 0, z: 0 };
+            let t_max;
             if (light.type === "point") {
                 L = {
                     x: light.position.x - P.x,
                     y: light.position.y - P.y,
                     z: light.position.z - P.z
                 };
+                t_max = 1;
             } else {
                 L = light.direction
+                t_max = Infinity;
             }
+
+            // Shadow check
+            const [shadow_sphere, shadow_t] = closestIntersection(P, L, 0.001, t_max)
+            if (shadow_sphere != null) {
+                continue;
+            }
+
             // Diffuse Light Equation
             const n_dot_l = dot(N, L);
             if (n_dot_l > 0) {
@@ -132,28 +143,39 @@ const computeLighting = (P, N, V, specular) => {
     return i;
 }
 
-const traceRay = (O, D, t_min, t_max) => {
+
+const closestIntersection = (origin, direction, t_min, t_max) => {
     let closest_t = Infinity;
     let closest_sphere = null;
     for (const sphere of spheres) {
-
-        const [t1, t2] = intersectRaySphere(O, D, sphere);
-        
+        const [t1, t2] = intersectRaySphere(origin, direction, sphere);
         if (t1 > t_min && t1 < t_max && t1 < closest_t) {
             closest_t = t1;
             closest_sphere = sphere;
         }
-
         if (t2 > t_min && t2 < t_max && t2 < closest_t) {
             closest_t = t2;
             closest_sphere = sphere;
         }
     }
+    return [closest_sphere, closest_t]
+}
+
+// Returns Reflected ray with respect to normal(N)
+const reflect_ray = (reflected_ray, normal) => {
+    const n_dot_r = dot(normal, reflected_ray);
+    return { x: 2 * n_dot_r * normal.x - reflected_ray.x, y: 2 * n_dot_r * normal.y - reflected_ray.y, z: 2 * n_dot_r * normal.z - reflected_ray.z };
+}
+
+// Returns the color of light when intersected
+const traceRay = (O, D, t_min, t_max, recursion_depth) => {
+    let closest_t, closest_sphere;
+    [closest_sphere, closest_t] = closestIntersection(O, D, t_min, t_max);
+    
     if (closest_sphere == null) {
         return BACKGROUND_COLOR;
     }
 
-    // return closest_sphere.color;
     // Position
     if (closest_t === Infinity) {
         return BACKGROUND_COLOR;
@@ -167,7 +189,22 @@ const traceRay = (O, D, t_min, t_max) => {
 
     // Lighting
     const lighting = computeLighting(P, N, {x: -D.x, y: -D.y, z: -D.z}, closest_sphere.specular)
-    return { r: closest_sphere.color.r * lighting, g: closest_sphere.color.g * lighting, b: closest_sphere.color.b * lighting }
+    const local_color =  { r: closest_sphere.color.r * lighting, g: closest_sphere.color.g * lighting, b: closest_sphere.color.b * lighting }
+
+    let reflectiveness = closest_sphere.reflective;
+    if (recursion_depth <= 0 || reflectiveness <= 0) {
+        return local_color;
+    }
+
+    // Reflected COlor
+    const reflected_ray = reflect_ray(D, N);
+    const reflected_color = traceRay(P, reflected_ray, 0.001, Infinity, recursion_depth - 1);
+
+    return {
+        r: local_color.r + (1 - reflectiveness) + reflected_color.r * reflectiveness,
+        g: local_color.g + (1 - reflectiveness) * reflected_color.g * reflectiveness,
+        b: local_color.b + (1 - reflectiveness) * reflected_color.b * reflectiveness
+    }
 }
 
 // const putPixel = (x, y, color) => {

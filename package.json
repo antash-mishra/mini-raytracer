@@ -7,10 +7,13 @@
     "build": "vite build",
     "preview": "vite preview"
   },
-  "dependencies": {
-  },
   "devDependencies": {
     "vite": "^6.2.3",
     "vite-plugin-restart": "0.4.2"
-  }
+  },
+  "main": "vite.config.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
 }

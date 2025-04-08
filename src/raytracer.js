@@ -8,6 +8,13 @@ class Sphere {
     }
 }
 
+class Camera {
+    constructor(position, rotation) {
+        this.position = position;
+        this.rotation = rotation;
+    }
+}
+
 class Light {
     constructor(type, intensity, position, direction) {
         this.type = type;
@@ -33,6 +40,8 @@ const O = {
     y: sizes.originY,
     z: sizes.originZ,
 }
+
+const camera = new Camera(O, { x: 0, y: 0, z: 0 })
 
 const BACKGROUND_COLOR = { r: 255, g: 255, b: 255 }
 
@@ -71,6 +80,7 @@ const magnitude = (v) => {
     return result;
 }
 
+// Checks if ray intersected a sphere
 function intersectRaySphere(O, D, sphere) {
     const radius = sphere.radius;
     const centerToOrigin = {
@@ -247,7 +257,7 @@ function updateCanvas() {
 for (let x = -sizes.width/2; x <= sizes.width/2; x++) {
     for (let y = -sizes.height/2; y <= sizes.height/2; y++) {
         // Convert from screen space to viewport space
-        let D = canvasToViewport(x, y);
+        let D = camera.canvasToViewport(x, y);
         let color = traceRay(O, D, 1, Infinity);
         // Ensure proper rendering position
         putPixel(x, y, color);

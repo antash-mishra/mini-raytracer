@@ -4,7 +4,11 @@ const sizes = {
     width: window.innerWidth,
     height: window.innerHeight
 }
+const BLUE = {r: 0, g: 0, b: 255};
+const RED = {r: 255, g: 0, b: 0};
+const GREEN = {r: 0, g: 255, b: 0};
 
+const d = 1;
 
 const canvas = document.getElementById("canvas");
 if (!canvas) {
@@ -52,6 +56,14 @@ class Point {
     }
 }
 
+class Vertex {
+    constructor(x, y, z) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+}
+
 
 const P0 = new Point(-200, -250, 0.3);
 const P1 = new Point(200, 50, 0.1);
@@ -64,6 +76,13 @@ const swapa = (a, b) => {
     return [a, b];
 }
 
+const viewportToCanvas = (x, y) => {
+    return {x: x * sizes.width / 1,y: -y * sizes.height / 1}
+}
+
+const projectVertex = (v) => {
+    return viewportToCanvas(v.x * d / v.z, v.y * d / v.z)
+}
 
 
 const interpolate = (i0, d0, i1, d1) => {
@@ -78,7 +97,7 @@ const interpolate = (i0, d0, i1, d1) => {
         d += a
     }
     return values;
-}
+} 
 
 const drawLine = (p0, p1, color) => {
     let dx = p1.x - p0.x 
@@ -221,9 +240,37 @@ const drawShadedTriangle = (p0, p1, p2, color) => {
     }
 }
 
+const vAf = new Vertex(-2, -0.5, 5)
+const vBf = new Vertex(-2, 0.5, 5)
+const vCf = new Vertex(-1, 0.5, 5)
+const vDf = new Vertex(-1, -0.5, 5)
+
+const vAb = new Vertex(-2, -0.5, 6)
+const vBb = new Vertex(-2, 0.5, 6)
+const vCb = new Vertex(-1, 0.5, 6)
+const vDb = new Vertex(-1, -0.5, 6) 
+
+
+// create cube
+drawLine(projectVertex(vAf), projectVertex(vBf), BLUE);
+drawLine(projectVertex(vBf), projectVertex(vCf), BLUE);
+drawLine(projectVertex(vCf), projectVertex(vDf), BLUE);
+drawLine(projectVertex(vDf), projectVertex(vAf), BLUE);
+
+drawLine(projectVertex(vAb), projectVertex(vBb), RED);
+drawLine(projectVertex(vBb), projectVertex(vCb), RED);
+drawLine(projectVertex(vCb), projectVertex(vDb), RED);
+drawLine(projectVertex(vDb), projectVertex(vAb), RED);
+
+drawLine(projectVertex(vAf), projectVertex(vAb), GREEN);
+drawLine(projectVertex(vBf), projectVertex(vBb), GREEN);
+drawLine(projectVertex(vCf), projectVertex(vCb), GREEN);
+drawLine(projectVertex(vDf), projectVertex(vDb), GREEN);
+
+
 // Draw your lines or other primitives here
-drawLine(P0, P1, {r: 255, g: 0, b: 0});
-drawLine(P1, P2, {r: 255, g: 0, b: 0});
-drawLine(P2, P0, {r: 255, g: 0, b: 0});
-drawShadedTriangle(P0, P1, P2, {r:0, g:255, b:0})
+// drawLine(P0, P1, {r: 255, g: 0, b: 0});
+// drawLine(P1, P2, {r: 255, g: 0, b: 0});
+// drawLine(P2, P0, {r: 255, g: 0, b: 0});
+// drawShadedTriangle(P0, P1, P2, {r:0, g:255, b:0})
 updateCanvas();

@@ -64,6 +64,52 @@ class Vertex {
     }
 }
 
+class Triangle {
+    constructor(v, color) {
+        this.v = v;
+        this.color = color;
+    }
+}
+
+class Model {
+    constructor(name, vertices, triangles) {
+        this.name = name;
+        this.vertices = vertices;
+        this.triangles = triangles;
+    }
+}
+
+class Transform {
+    constructor(scale, rotation, translation) {
+        this.scale = scale;
+        this.rotation = rotation;
+        this.translation = translation;
+    }
+}
+
+
+class Instance {
+    constructor(model, transform) {
+        this.model = model;
+        this.transform = transform;
+    }
+}
+
+class Camera {
+    constructor(position, rotation) {
+        this.position = position;
+        this.rotation = rotation;
+    }
+}
+
+class Vec4 {
+    constructor(x, y, z, w) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.w = w;
+    }
+}
 
 const P0 = new Point(-200, -250, 0.3);
 const P1 = new Point(200, 50, 0.1);
@@ -77,7 +123,7 @@ const swapa = (a, b) => {
 }
 
 const viewportToCanvas = (x, y) => {
-    return {x: x * sizes.width / 1,y: -y * sizes.height / 1}
+    return {x: x * sizes.width / 1,y: y * sizes.height / 1}
 }
 
 const projectVertex = (v) => {
@@ -124,6 +170,12 @@ const drawLine = (p0, p1, color) => {
     }
 }
 
+const drawWireframeTriangle = (p0, p1, p2, color) => {
+    drawLine(p0, p1, color);
+    drawLine(p1, p2, color);
+    drawLine(p2, p0, color);
+}
+
 const drawFilledTriangle = (p0, p1, p2, color) => {
     // sort the points so that y0<=y1<=y2
     if (p1.y < p0.y) {
@@ -140,7 +192,7 @@ const drawFilledTriangle = (p0, p1, p2, color) => {
     let x01 = interpolate(p0.y, p0.x, p1.y, p1.x);
     let x12 = interpolate(p1.y, p1.x, p2.y, p2.x);
     let x02 = interpolate(p0.y, p0.x, p2.y, p2.x);
-
+    
     // remove last eleement of x01 and concatenate the x01 and x12 arrays
     x01.pop();
     const x012 = x01.concat(x12);
@@ -240,32 +292,193 @@ const drawShadedTriangle = (p0, p1, p2, color) => {
     }
 }
 
-const vAf = new Vertex(-2, -0.5, 5)
-const vBf = new Vertex(-2, 0.5, 5)
-const vCf = new Vertex(-1, 0.5, 5)
-const vDf = new Vertex(-1, -0.5, 5)
+const renderTriangle = (triangle, projected) => {
+    drawWireframeTriangle(projected[triangle.v[0]], projected[triangle.v[1]], projected[triangle.v[2]], triangle.color);
+}
 
-const vAb = new Vertex(-2, -0.5, 6)
-const vBb = new Vertex(-2, 0.5, 6)
-const vCb = new Vertex(-1, 0.5, 6)
-const vDb = new Vertex(-1, -0.5, 6) 
+function makeOYRotationMatrix(rotation) {
+    const degree = rotation.y;
+    const cos = Math.cos(degree*Math.PI/180);
+    const sin = Math.sin(degree*Math.PI/180);
+    return [
+        [cos, 0, -sin, 0],
+        [0, 1, 0, 0],
+        [sin, 0, cos, 0],
+        [0, 0, 0, 1]
+    ];
+}
 
+function makeTranslationMatrix(translation) {
+    return [
+        [1, 0, 0, translation.x],
+        [0, 1, 0, translation.y],
+        [0, 0, 1, translation.z],
+        [0, 0, 0, 1]
+    ];
+}
+
+function makeScaleMatrix(scale) {
+    return [
+        [scale.x, 0, 0, 0],
+        [0, scale.y, 0, 0],
+        [0, 0, scale.z, 0],
+        [0, 0, 0, 1]
+    ];
+}
+
+function multiplyMatrices(a, b) {
+    const result = [];
+    for (let i = 0; i < 4; i++) {
+        result[i] = [];
+        for (let j = 0; j < 4; j++) {
+            let sum = 0;
+            for (let k = 0; k < 4; k++) {
+                sum += a[i][k] * b[k][j];
+            }
+            result[i][j] = sum;
+        }
+    }
+    return result;
+}
+
+// multiply matrix and 4d vector
+function multiplyMatrixVector(matrix, vector) {
+    const result = [];
+    let vec = [vector.x, vector.y, vector.z, vector.w];
+
+    for (let i = 0; i < 4; i++) {
+        let sum = 0;
+        for (let j = 0; j < 4; j++) {
+            sum += matrix[i][j] * vec[j];
+        }
+        result[i] = sum;
+    }
+    return new Vec4(result[0], result[1], result[2], result[3]);
+}
+
+function transposeMatrix(matrix) {
+    const result = [[0,0,0,0], [0,0,0,0], [0,0,0,0], [0,0,0,0]];
+    for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+            result[i][j] = matrix[j][i];
+        }
+    }
+    return result;
+}
+
+const applyTransformation = (vertex, transform) => {
+    const scaled = {
+        x: vertex.x * transform.scale.x,
+        y: vertex.y * transform.scale.y,
+        z: vertex.z * transform.scale.z
+    }
+    
+    const rotated = rotate(scaled, transform.rotation);
+    const translated = translate(rotrated, transform.translation);
+    return translated;
+    
+}
+
+const renderObject = (instance, transformMatrix) => {
+    let projected = []
+    // console.log(instance[0]);
+    const instancedModel = instance.model;
+    const transformation = instance.transform;
+    for (const vertex of instancedModel.vertices) {
+        // translate vertex by {x: -1.5, y:0, z:7}
+        // vertex.x += position.x;
+        // vertex.y += position.y;
+        // vertex.z += position.z;
+        let projectedVertex = projectVertex(multiplyMatrixVector(transformMatrix, new Vec4(vertex.x, vertex.y, vertex.z, 1)))
+        // console.log(multiplyMatrixVector(vertex))
+        console.log(projectedVertex);
+        projected.push(projectedVertex)
+    }
+    // console.log(projected)
+
+    for (const triangle of instancedModel.triangles) {
+        // console.log(triangle.v1, triangle.v2, triangle.v3)
+        renderTriangle(triangle, projected)
+    }
+}
+
+const makeCameraMatrix = (position, rotation) => {
+    const translationMatrix = makeTranslationMatrix(position);
+    const rotationMatrix = makeOYRotationMatrix(rotation);
+    const cameraMatrix = multiplyMatrices(translationMatrix, rotationMatrix);
+    return cameraMatrix;
+}
+
+const renderScene = () => {
+    const cameraMatrix = makeCameraMatrix(camera.position, camera.rotation);
+    // console.log(cameraMatrix);
+    for (const cube of cubeInstance) {
+        const transformMatrix = multiplyMatrices(
+            makeTranslationMatrix(cube.transform.translation), 
+            multiplyMatrices(
+                makeScaleMatrix(cube.transform.scale), 
+                makeOYRotationMatrix(cube.transform.rotation)
+            )
+        );
+        
+        
+        const matrix = multiplyMatrices(cameraMatrix, transformMatrix);
+        renderObject(cube, matrix);
+    }
+}
+
+let camera = new Camera(new Vertex(-3, 1,2), {x: 0, y: -30, z: 0})
+
+const v0 = new Vertex(1, 1, 1)
+const v1 = new Vertex(-1, 1, 1)
+const v2 = new Vertex(-1, -1, 1)
+const v3 = new Vertex(1, -1, 1)
+
+const v4 = new Vertex(1, 1, -1)
+const v5 = new Vertex(-1, 1, -1)
+const v6 = new Vertex(-1, -1, -1)
+const v7 = new Vertex(1, -1, -1)
+
+const vertices = [v0, v1, v2, v3, v4, v5, v6, v7]
+
+// Triangle index for cube
+const triangle_index = [
+    new Triangle([0,1,2], RED),
+    new Triangle([0,2,3], RED),
+    new Triangle([4,0,3], GREEN),
+    new Triangle([4,3,7], GREEN),
+    new Triangle([5,4,7], BLUE),
+    new Triangle([5,7,6], BLUE),
+    new Triangle([1,5,6], GREEN),
+    new Triangle([1,6,2], GREEN),
+    new Triangle([4,5,1], BLUE),
+    new Triangle([4,1,0], BLUE),
+    new Triangle([2,6,7], RED),
+    new Triangle([2,7,3], RED)
+]
+
+const cubeModel = new Model("cube", vertices, triangle_index)
+const cubeA = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: -1.5, y: 0, z: 7}))
+const cubeB = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: 1.25, y: 2, z: 7.5}))
+const cubeInstance = [cubeA, cubeB]
+
+renderScene(cubeInstance)
 
 // create cube
-drawLine(projectVertex(vAf), projectVertex(vBf), BLUE);
-drawLine(projectVertex(vBf), projectVertex(vCf), BLUE);
-drawLine(projectVertex(vCf), projectVertex(vDf), BLUE);
-drawLine(projectVertex(vDf), projectVertex(vAf), BLUE);
+// drawLine(projectVertex(vAf), projectVertex(vBf), BLUE);
+// drawLine(projectVertex(vBf), projectVertex(vCf), BLUE);
+// drawLine(projectVertex(vCf), projectVertex(vDf), BLUE);
+// drawLine(projectVertex(vDf), projectVertex(vAf), BLUE);
 
-drawLine(projectVertex(vAb), projectVertex(vBb), RED);
-drawLine(projectVertex(vBb), projectVertex(vCb), RED);
-drawLine(projectVertex(vCb), projectVertex(vDb), RED);
-drawLine(projectVertex(vDb), projectVertex(vAb), RED);
+// drawLine(projectVertex(vAb), projectVertex(vBb), RED);
+// drawLine(projectVertex(vBb), projectVertex(vCb), RED);
+// drawLine(projectVertex(vCb), projectVertex(vDb), RED);
+// drawLine(projectVertex(vDb), projectVertex(vAb), RED);
 
-drawLine(projectVertex(vAf), projectVertex(vAb), GREEN);
-drawLine(projectVertex(vBf), projectVertex(vBb), GREEN);
-drawLine(projectVertex(vCf), projectVertex(vCb), GREEN);
-drawLine(projectVertex(vDf), projectVertex(vDb), GREEN);
+// drawLine(projectVertex(vAf), projectVertex(vAb), GREEN);
+// drawLine(projectVertex(vBf), projectVertex(vBb), GREEN);
+// drawLine(projectVertex(vCf), projectVertex(vCb), GREEN);
+// drawLine(projectVertex(vDf), projectVertex(vDb), GREEN);
 
 
 // Draw your lines or other primitives here

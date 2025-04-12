@@ -72,10 +72,12 @@ class Triangle {
 }
 
 class Model {
-    constructor(name, vertices, triangles) {
+    constructor(name, vertices, triangles, bounding_center, bounding_radius) {
         this.name = name;
         this.vertices = vertices;
         this.triangles = triangles;
+        this.bounding_center = bounding_center;
+        this.bounding_radius = bounding_radius;
     }
 }
 
@@ -92,6 +94,8 @@ class Instance {
     constructor(model, transform) {
         this.model = model;
         this.transform = transform;
+        // this.bounding_center = bounding_center;
+        // this.bounding_radius = bounding_radius;
     }
 }
 
@@ -108,6 +112,13 @@ class Vec4 {
         this.y = y;
         this.z = z;
         this.w = w;
+    }
+}
+
+class Plane {
+    constructor(normal, d) {
+        this.normal = normal;
+        this.d = d;
     }
 }
 
@@ -366,32 +377,122 @@ function transposeMatrix(matrix) {
     return result;
 }
 
-const applyTransformation = (vertex, transform) => {
-    const scaled = {
-        x: vertex.x * transform.scale.x,
-        y: vertex.y * transform.scale.y,
-        z: vertex.z * transform.scale.z
+
+const signedDistance = (vertex, plane) => {
+    const normal = plane.normal;
+    const d = plane.d;
+    return normal.x * vertex.x + normal.y * vertex.y + normal.z * vertex.z + d;
+}
+
+// send 
+const clipTrianglesAgainstPlane = (model, plane, vertices) => {
+    
+    let clipped_triangles = [];
+
+    for (let i = 0; i < model.triangles.length; i++) {
+        let triangle_new = model.triangles[i];
+        let clipped_triangle = clipTriangle(triangle_new, vertices, plane);
+
+        if (clipped_triangle === null) {
+            continue; // Skip this triangle instead of returning null
+        }
+        clipped_triangles.push(clipped_triangle);
     }
+    return clipped_triangles.length > 0 ? clipped_triangles : null;
+}
+
+
+const clipTriangle = (triangle, vertices, plane) => {
+    // console.log(vertices[triangle.v[0]]);
+
+    // Getting signed distance for each vertex of the triangle with the plane
+
+    let d0 = signedDistance(vertices[triangle.v[0]], plane);
+    let d1 = signedDistance(vertices[triangle.v[1]], plane) ;
+    let d2 = signedDistance(vertices[triangle.v[2]], plane);
+ 
+    let in0 = d0 > 0;
+    let in1 = d1 > 0;
+    let in2 = d2 > 0;
     
-    const rotated = rotate(scaled, transform.rotation);
-    const translated = translate(rotrated, transform.translation);
-    return translated;
-    
+    // Count how many vertices are in front of the plane
+    let in_count = (in0 ? 1 : 0) + (in1 ? 1 : 0) + (in2 ? 1 : 0);
+
+
+    if (in_count == 0) {
+        // Nothing to do - the triangle is fully clipped out.
+      } else if (in_count == 3) {
+        // The triangle is fully in front of the plane.
+        return triangle;
+    } else if (in_count == 1) {
+        // The triangle has one vertex in. Output is one clipped triangle.
+      } else if (in_count == 2) {
+        // The triangle has two vertices in. Output is two clipped triangles.
+      }    
+}
+
+
+
+const clipInstance = (model, planes, transformMatrix, scale) => {
+    // Transform center and radius of the bounding sphere
+
+    let center = multiplyMatrixVector(transformMatrix, new Vec4(model.bounding_center.x, model.bounding_center.y, model.bounding_center.z, 1));
+    let radius = model.bounding_radius * scale.x;
+
+    for (let i = 0; i < planes.length; i++) {
+        let plane = planes[i];
+
+        let distance = signedDistance(center, plane);
+
+        // let clipped_instance = clipInstanceAgainstPlane(model, plane, transformMatrix);
+        if (distance < -radius) {
+            // If the instance is completely outside the plane return null
+            return null;
+        }
+    }
+
+    // applying model view transform
+    let vertices = []
+    for (const vertex of model.vertices) {
+        let projectedVertex = multiplyMatrixVector(transformMatrix, new Vec4(vertex.x, vertex.y, vertex.z, 1))
+        vertices.push(projectedVertex)
+    }
+
+    // copy of triangles to avoid modifying the original
+    let triangles = [...model.triangles];
+    // Clip triangles against planes
+    for (let plane of planes) {
+        let clipped_triangles = clipTrianglesAgainstPlane(model, plane, vertices);
+        if (clipped_triangles === null) {
+            return null;
+        }
+        triangles = clipped_triangles;
+    }
+
+    return new Model(
+        model.name,
+        vertices,
+        triangles,
+        center,
+        radius
+    );
+
+}
+
+const makeCameraMatrix = (position, rotation) => {
+    const translationMatrix = makeTranslationMatrix(position);
+    const rotationMatrix = makeOYRotationMatrix(rotation);
+    const cameraMatrix = multiplyMatrices(translationMatrix, rotationMatrix);
+    return cameraMatrix;
 }
 
 const renderObject = (instance, transformMatrix) => {
     let projected = []
-    // console.log(instance[0]);
-    const instancedModel = instance.model;
-    const transformation = instance.transform;
+    const instancedModel = instance;
+    
     for (const vertex of instancedModel.vertices) {
-        // translate vertex by {x: -1.5, y:0, z:7}
-        // vertex.x += position.x;
-        // vertex.y += position.y;
-        // vertex.z += position.z;
-        let projectedVertex = projectVertex(multiplyMatrixVector(transformMatrix, new Vec4(vertex.x, vertex.y, vertex.z, 1)))
+        let projectedVertex = projectVertex(vertex);
         // console.log(multiplyMatrixVector(vertex))
-        console.log(projectedVertex);
         projected.push(projectedVertex)
     }
     // console.log(projected)
@@ -400,13 +501,6 @@ const renderObject = (instance, transformMatrix) => {
         // console.log(triangle.v1, triangle.v2, triangle.v3)
         renderTriangle(triangle, projected)
     }
-}
-
-const makeCameraMatrix = (position, rotation) => {
-    const translationMatrix = makeTranslationMatrix(position);
-    const rotationMatrix = makeOYRotationMatrix(rotation);
-    const cameraMatrix = multiplyMatrices(translationMatrix, rotationMatrix);
-    return cameraMatrix;
 }
 
 const renderScene = () => {
@@ -420,10 +514,13 @@ const renderScene = () => {
                 makeOYRotationMatrix(cube.transform.rotation)
             )
         );
-        
-        
         const matrix = multiplyMatrices(cameraMatrix, transformMatrix);
-        renderObject(cube, matrix);
+        let clipped_cube_model = clipInstance(cube.model, planes, matrix, cube.transform.scale);
+        if (clipped_cube_model !== null) {
+            // Check if the clipped instance is not empty        
+            console.log(clipped_cube_model);
+            renderObject(clipped_cube_model, matrix);
+        }
     }
 }
 
@@ -457,12 +554,22 @@ const triangle_index = [
     new Triangle([2,7,3], RED)
 ]
 
-const cubeModel = new Model("cube", vertices, triangle_index)
-const cubeA = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: -1.5, y: 0, z: 7}))
-const cubeB = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: 1.25, y: 2, z: 7.5}))
+const cubeModel = new Model("cube", vertices, triangle_index, new Vertex(0, 0, 0), Math.sqrt(3));
+const cubeA = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: -3.5, y: 0, z: 7}))
+const cubeB = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: 1.25, y: 0, z: 7.5}))
 const cubeInstance = [cubeA, cubeB]
 
-renderScene(cubeInstance)
+let s2 = 1.0/Math.sqrt(2);
+
+const planes = [
+    new Plane(new Vertex(0,0,1), -1), // Near
+    new Plane(new Vertex(s2,0,s2), 0), // left
+    new Plane(new Vertex(-s2,0,s2), 0), // right
+    new Plane(new Vertex(0,-s2,s2), 0), // top
+    new Plane(new Vertex(0,s2,s2), 0), // bottom
+]
+
+renderScene()
 
 // create cube
 // drawLine(projectVertex(vAf), projectVertex(vBf), BLUE);

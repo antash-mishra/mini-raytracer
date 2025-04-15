@@ -1,19 +1,49 @@
 "use strict";
 
+// size for the canvas
 const sizes = {
     width: window.innerWidth,
     height: window.innerHeight
 }
-const BLUE = {r: 0, g: 0, b: 255};
-const RED = {r: 255, g: 0, b: 0};
-const GREEN = {r: 0, g: 255, b: 0};
+const RED = {r: 255, g:0, b:0};
+const GREEN = {r:0, g:255, b:0};
+const BLUE = {r:0, g:0, b:255};
+const YELLOW = {r:255, g:255, b:0};
+const PURPLE = {r:255, g:0, b:255};
+const CYAN = {r:0, g:255, b:255};
 
+// distnace between viewport and camera in z axis 
 const d = 1;
 
+// canvas
 const canvas = document.getElementById("canvas");
+canvas.width = sizes.width
+canvas.height = sizes.height
+
 if (!canvas) {
     throw new Error("Canvas element not found");
 }
+
+
+let depth_buffer = Array();
+depth_buffer.length = canvas.width * canvas.height;
+
+function UpdateDepthBufferIfCloser(x, y, inv_z) {
+    x = canvas.width/2 + (x | 0);
+    y = canvas.height/2 - (y | 0) - 1;
+  
+    if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) {
+      return false;
+    }
+    
+    let offset = x + canvas.width*y;
+  if (depth_buffer[offset] == undefined || depth_buffer[offset] < inv_z) {
+    depth_buffer[offset] = inv_z;
+    return true;
+  }
+  return false;
+}
+
 
 const ctx = canvas.getContext("2d");
 if (!ctx) {
@@ -22,9 +52,8 @@ if (!ctx) {
 
 let canvas_buffer = ctx.getImageData(0, 0, sizes.width, sizes.height);
 
-canvas.width = sizes.width;
-canvas.height = sizes.height;
 
+// set cavas color on the x and y axis
 const putPixel = (x, y, color) => {
     x = canvas.width/2 + (x | 0);
     y = canvas.height/2 - (y | 0) - 1;
@@ -48,6 +77,7 @@ const updateCanvas = () => {
     ctx.putImageData(canvas_buffer, 0, 0);
 }
 
+// class to represent a point in 2D space where h is the color intensity at that pixel
 class Point {
     constructor(x, y, h) {
         this.x = x;
@@ -56,6 +86,7 @@ class Point {
     }
 }
 
+// class to represent a vertex in 3D space
 class Vertex {
     constructor(x, y, z) {
         this.x = x;
@@ -64,6 +95,8 @@ class Vertex {
     }
 }
 
+// class to represent a triangle in 3D space where v is the index of the vertices in the model
+// and color is the color of the triangle
 class Triangle {
     constructor(v, color) {
         this.v = v;
@@ -71,6 +104,9 @@ class Triangle {
     }
 }
 
+// class to represent a model in 3D space where vertices is the array of vertices in the model
+// triangles is the array of triangles in the model, bounding_center is the center of the bounding sphere
+// and bounding_radius is the radius of the bounding sphere
 class Model {
     constructor(name, vertices, triangles, bounding_center, bounding_radius) {
         this.name = name;
@@ -81,6 +117,8 @@ class Model {
     }
 }
 
+// class to represent a transform in 3D space where scale is the scale of the model, rotation is the rotation of the model
+// and translation is the translation of the model
 class Transform {
     constructor(scale, rotation, translation) {
         this.scale = scale;
@@ -89,16 +127,15 @@ class Transform {
     }
 }
 
-
+// class to represent an instance of a model in 3D space where model is the model and transform is the transform of the model
 class Instance {
     constructor(model, transform) {
         this.model = model;
         this.transform = transform;
-        // this.bounding_center = bounding_center;
-        // this.bounding_radius = bounding_radius;
     }
 }
 
+// class to represent camera in 3D space where position is the position of the camera and rotation is the rotation of the camera
 class Camera {
     constructor(position, rotation) {
         this.position = position;
@@ -106,6 +143,8 @@ class Camera {
     }
 }
 
+// class to represent a 4D vector where x, y, z are the coordinates of the vector
+// and w is the homogeneous coordinate that represent vector being 1 and point being 0
 class Vec4 {
     constructor(x, y, z, w) {
         this.x = x;
@@ -115,6 +154,8 @@ class Vec4 {
     }
 }
 
+// class to represent a plane in 3D space where normal is the normal vector of the plane
+// and d is the distance from the origin to the plane
 class Plane {
     constructor(normal, d) {
         this.normal = normal;
@@ -126,6 +167,7 @@ const P0 = new Point(-200, -250, 0.3);
 const P1 = new Point(200, 50, 0.1);
 const P2 = new Point(20, 250, 1.0);
 
+// Function to swap two variables
 const swapa = (a, b) => {
     let temp = a;
     a = b;
@@ -133,10 +175,14 @@ const swapa = (a, b) => {
     return [a, b];
 }
 
+// Function to convert viewport coordinates to canvas coordinates
 const viewportToCanvas = (x, y) => {
-    return {x: x * sizes.width / 1,y: y * sizes.height / 1}
+
+    console.log(x * sizes.width / 1 , y * sizes.height / 1 )
+    return { x: x * sizes.width / 1 | 0,y: y * sizes.height / 1 | 0 }
 }
 
+// Function to project a 3D vertex to 2D canvas coordinates
 const projectVertex = (v) => {
     return viewportToCanvas(v.x * d / v.z, v.y * d / v.z)
 }
@@ -154,7 +200,7 @@ const interpolate = (i0, d0, i1, d1) => {
         d += a
     }
     return values;
-} 
+}
 
 const drawLine = (p0, p1, color) => {
     let dx = p1.x - p0.x 
@@ -193,17 +239,19 @@ const drawFilledTriangle = (p0, p1, p2, color) => {
         [p0, p1] = swapa(p0, p1);
     }
     if (p2.y < p0.y) {
-        [p0, p2] = swapa(p1, p2);
+        [p0, p2] = swapa(p0, p2);
     }
     if (p2.y < p1.y) {
-        [p1, p2] = swapa(p0, p1);
+        [p1, p2] = swapa(p1, p2);
     }
+
+    console.log(p0, p1, p2)
 
     // compute the x coordinates of triangle edges
     let x01 = interpolate(p0.y, p0.x, p1.y, p1.x);
     let x12 = interpolate(p1.y, p1.x, p2.y, p2.x);
     let x02 = interpolate(p0.y, p0.x, p2.y, p2.x);
-    
+
     // remove last eleement of x01 and concatenate the x01 and x12 arrays
     x01.pop();
     const x012 = x01.concat(x12);
@@ -303,14 +351,95 @@ const drawShadedTriangle = (p0, p1, p2, color) => {
     }
 }
 
-const renderTriangle = (triangle, projected) => {
-    drawWireframeTriangle(projected[triangle.v[0]], projected[triangle.v[1]], projected[triangle.v[2]], triangle.color);
+
+const sortVertices = (vertex_indexes,  projected) => {
+    let indexes = [0, 1, 2]
+
+    if (projected[vertex_indexes[indexes[1]]].y < projected[vertex_indexes[indexes[0]]].y) {
+        let swap = indexes[0]; indexes[0] = indexes[1]; indexes[1] = swap; 
+    }
+    if (projected[vertex_indexes[indexes[2]]].y < projected[vertex_indexes[indexes[0]]].y) {
+        let swap = indexes[0]; indexes[0] = indexes[2]; indexes[2] = swap; 
+    }
+    if (projected[vertex_indexes[indexes[2]]].y < projected[vertex_indexes[indexes[1]]].y) {
+        let swap = indexes[1]; indexes[1] = indexes[2]; indexes[2] = swap; 
+    }
+    return indexes;
 }
+
+const edgeInterpolate = (y0, v0, y1, v1, y2, v2) => {
+    let v01 = interpolate(y0, v0, y1, v1);
+    let v12 = interpolate(y1, v1, y2, v2);
+    let v02 = interpolate(y0, v0, y2, v2);
+    v01.pop();
+    let v012 = v01.concat(v12);
+    return [v02, v012];
+}
+
+const renderTriangle = (triangle, projected, vertices) => {
+    // console.log(projected[triangle.v[0]], triangle.color)
+    // sort the vertices from the projected vertices
+    // let p0 = projected[triangle.v[0]];
+    // let p1 = projected[triangle.v[1]];
+    // let p2 = projected[triangle.v[2]];
+    // console.log(triangle)
+    let [i0, i1, i2] = sortVertices(triangle.v, projected);
+
+    // Vertcies of triangle
+    let v0 = vertices[triangle.v[i0]];
+    let v1 = vertices[triangle.v[i1]];
+    let v2 = vertices[triangle.v[i2]];
+
+
+    let p0 = projected[triangle.v[i0]];
+    let p1 = projected[triangle.v[i1]];
+    let p2 = projected[triangle.v[i2]];
+  
+    // calculate attribute values at the edges
+    let [x02, x012] = edgeInterpolate(p0.y, p0.x, p1.y, p1.x, p2.y, p2.x); // for drawing color
+    let [z02, z012] = edgeInterpolate(p0.y, 1.0/v0.z, p1.y, 1.0/v1.z, p2.y, 1.0/v2.z); // for depth buffer calculation
+
+    // Determining left and right sides
+    let m = (x02.length / 2) | 0;
+    if (x02[m] < x012[m]) {
+        var [x_left, x_right] = [x02, x012];
+        var [iz_left, iz_right] = [z02, z012];
+      } else {
+        var [x_left, x_right] = [x012, x02];
+        var [iz_left, iz_right] = [z012, z02];
+      }
+    
+      // Draw horizontal segments.
+      for (let y = p0.y; y <= p2.y; y++) {
+        let [xl, xr] = [x_left[y - p0.y] | 0, x_right[y - p0.y] | 0];
+    
+        // Interpolate attributes for this scanline.
+        let [zl, zr] = [iz_left[y - p0.y], iz_right[y - p0.y]];
+        let zscan = interpolate(xl, zl, xr, zr);
+    
+        for (let x = xl; x <= xr; x++) {
+          if (UpdateDepthBufferIfCloser(x, y, zscan[x - xl])) {
+            putPixel(x, y, triangle.color);
+          }
+        }
+      }
+    // drawWireframeTriangle(
+    //     projected[triangle.v[0]], 
+    //     projected[triangle.v[1]], 
+    //     projected[triangle.v[2]], 
+    //     {r: triangle.color.r * 0.75, g: triangle.color.g * 0.75, b: triangle.color.b * 0.75});
+}
+
+
+
+
+const Identity4x4 = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+
 
 function makeOYRotationMatrix(rotation) {
     const degree = rotation.y;
-    const cos = Math.cos(degree*Math.PI/180);
-    const sin = Math.sin(degree*Math.PI/180);
+    const cos = Math.cos(degree*Math.PI/180.0);
+    const sin = Math.sin(degree*Math.PI/180.0);
     return [
         [cos, 0, -sin, 0],
         [0, 1, 0, 0],
@@ -324,7 +453,7 @@ function makeTranslationMatrix(translation) {
         [1, 0, 0, translation.x],
         [0, 1, 0, translation.y],
         [0, 0, 1, translation.z],
-        [0, 0, 0, 1]
+        [0, 0, 0,             1]
     ];
 }
 
@@ -338,15 +467,13 @@ function makeScaleMatrix(scale) {
 }
 
 function multiplyMatrices(a, b) {
-    const result = [];
+    let result = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]];
+
     for (let i = 0; i < 4; i++) {
-        result[i] = [];
         for (let j = 0; j < 4; j++) {
-            let sum = 0;
             for (let k = 0; k < 4; k++) {
-                sum += a[i][k] * b[k][j];
+                result[i][j] += a[i][k] * b[k][j];
             }
-            result[i][j] = sum;
         }
     }
     return result;
@@ -354,15 +481,13 @@ function multiplyMatrices(a, b) {
 
 // multiply matrix and 4d vector
 function multiplyMatrixVector(matrix, vector) {
-    const result = [];
+    let result = [0, 0, 0, 0];
     let vec = [vector.x, vector.y, vector.z, vector.w];
 
     for (let i = 0; i < 4; i++) {
-        let sum = 0;
         for (let j = 0; j < 4; j++) {
-            sum += matrix[i][j] * vec[j];
+            result[i] += matrix[i][j] * vec[j];
         }
-        result[i] = sum;
     }
     return new Vec4(result[0], result[1], result[2], result[3]);
 }
@@ -433,6 +558,7 @@ const clipTriangle = (triangle, vertices, plane) => {
 
 
 
+
 const clipInstance = (model, planes, transformMatrix, scale) => {
     // Transform center and radius of the bounding sphere
 
@@ -481,50 +607,51 @@ const clipInstance = (model, planes, transformMatrix, scale) => {
 
 const makeCameraMatrix = (position, rotation) => {
     const translationMatrix = makeTranslationMatrix(position);
-    const rotationMatrix = makeOYRotationMatrix(rotation);
-    const cameraMatrix = multiplyMatrices(translationMatrix, rotationMatrix);
+    const rotationMatrix = transposeMatrix(makeOYRotationMatrix(rotation));
+    const cameraMatrix = multiplyMatrices(rotationMatrix, translationMatrix);
     return cameraMatrix;
 }
 
-const renderObject = (instance, transformMatrix) => {
+const renderObject = (instance) => {
     let projected = []
     const instancedModel = instance;
+    // console.log(instancedModel)
     
     for (const vertex of instancedModel.vertices) {
+        
         let projectedVertex = projectVertex(vertex);
+        // console.log(vertex, projectedVertex)
         // console.log(multiplyMatrixVector(vertex))
         projected.push(projectedVertex)
+
     }
-    // console.log(projected)
+
 
     for (const triangle of instancedModel.triangles) {
-        // console.log(triangle.v1, triangle.v2, triangle.v3)
-        renderTriangle(triangle, projected)
+        // console.log(triangle)
+        renderTriangle(triangle, projected, instancedModel.vertices);
     }
 }
 
 const renderScene = () => {
-    const cameraMatrix = makeCameraMatrix(camera.position, camera.rotation);
+    const cameraMatrix = makeCameraMatrix(new Vertex(-camera.position.x, -camera.position.y, -camera.position.z), camera.rotation);
     // console.log(cameraMatrix);
     for (const cube of cubeInstance) {
-        const transformMatrix = multiplyMatrices(
+        let cubeRotationMatrix = cube.transform.rotation.y !== 0 ? makeOYRotationMatrix(cube.transform.rotation) : Identity4x4
+        let cubeTransformMatrix = multiplyMatrices(
             makeTranslationMatrix(cube.transform.translation), 
-            multiplyMatrices(
-                makeScaleMatrix(cube.transform.scale), 
-                makeOYRotationMatrix(cube.transform.rotation)
+            multiplyMatrices( 
+                cubeRotationMatrix,
+                makeScaleMatrix(cube.transform.scale)
             )
         );
-        const matrix = multiplyMatrices(cameraMatrix, transformMatrix);
-        let clipped_cube_model = clipInstance(cube.model, planes, matrix, cube.transform.scale);
-        if (clipped_cube_model !== null) {
-            // Check if the clipped instance is not empty        
-            console.log(clipped_cube_model);
-            renderObject(clipped_cube_model, matrix);
+        let transformMatrix = multiplyMatrices(cameraMatrix, cubeTransformMatrix);
+        let clipped_cube_model = clipInstance(cube.model, clipping_planes, transformMatrix, cube.transform.scale);
+        if (clipped_cube_model != null) {
+            renderObject(clipped_cube_model);
         }
     }
 }
-
-let camera = new Camera(new Vertex(-3, 1,2), {x: 0, y: -30, z: 0})
 
 const v0 = new Vertex(1, 1, 1)
 const v1 = new Vertex(-1, 1, 1)
@@ -540,28 +667,32 @@ const vertices = [v0, v1, v2, v3, v4, v5, v6, v7]
 
 // Triangle index for cube
 const triangle_index = [
-    new Triangle([0,1,2], RED),
-    new Triangle([0,2,3], RED),
-    new Triangle([4,0,3], GREEN),
-    new Triangle([4,3,7], GREEN),
-    new Triangle([5,4,7], BLUE),
-    new Triangle([5,7,6], BLUE),
-    new Triangle([1,5,6], GREEN),
-    new Triangle([1,6,2], GREEN),
-    new Triangle([4,5,1], BLUE),
-    new Triangle([4,1,0], BLUE),
-    new Triangle([2,6,7], RED),
-    new Triangle([2,7,3], RED)
-]
+    new Triangle([0, 1, 2], RED),
+    new Triangle([0, 2, 3], RED),
+    new Triangle([1, 5, 6], YELLOW),
+    new Triangle([1, 6, 2], YELLOW),
+    new Triangle([2, 6, 7], CYAN),
+    new Triangle([2, 7, 3], CYAN),
+    new Triangle([4, 0, 3], GREEN),
+    new Triangle([4, 1, 0], PURPLE),
+    new Triangle([4, 3, 7], GREEN),
+    new Triangle([4, 5, 1], PURPLE),
+    new Triangle([5, 4, 7], BLUE),
+    new Triangle([5, 7, 6], BLUE),
+  ];
+  
 
 const cubeModel = new Model("cube", vertices, triangle_index, new Vertex(0, 0, 0), Math.sqrt(3));
-const cubeA = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: -3.5, y: 0, z: 7}))
-const cubeB = new Instance(cubeModel, new Transform({x: 1.2,y: 1.2,z: 1.2}, {x: 0, y: Math.PI/4, z: 0}, {x: 1.25, y: 0, z: 7.5}))
+const cubeA = new Instance(cubeModel, new Transform({x: 0.75,y: 0.75,z: 0.75}, {x: 0, y: 0, z: 0}, {x: -1.5, y: 0, z: 7}))
+const cubeB = new Instance(cubeModel, new Transform({x: 1,y: 1,z: 1}, {x: 0, y: 195, z: 0}, {x: 1.25, y: 2.5, z: 7.5}))
+
 const cubeInstance = [cubeA, cubeB]
+
+let camera = new Camera(new Vertex(-3, 1,2), {x: 0, y: -30, z: 0})
 
 let s2 = 1.0/Math.sqrt(2);
 
-const planes = [
+const clipping_planes = [
     new Plane(new Vertex(0,0,1), -1), // Near
     new Plane(new Vertex(s2,0,s2), 0), // left
     new Plane(new Vertex(-s2,0,s2), 0), // right
@@ -569,28 +700,8 @@ const planes = [
     new Plane(new Vertex(0,s2,s2), 0), // bottom
 ]
 
+console.log(depth_buffer)
+
 renderScene()
 
-// create cube
-// drawLine(projectVertex(vAf), projectVertex(vBf), BLUE);
-// drawLine(projectVertex(vBf), projectVertex(vCf), BLUE);
-// drawLine(projectVertex(vCf), projectVertex(vDf), BLUE);
-// drawLine(projectVertex(vDf), projectVertex(vAf), BLUE);
-
-// drawLine(projectVertex(vAb), projectVertex(vBb), RED);
-// drawLine(projectVertex(vBb), projectVertex(vCb), RED);
-// drawLine(projectVertex(vCb), projectVertex(vDb), RED);
-// drawLine(projectVertex(vDb), projectVertex(vAb), RED);
-
-// drawLine(projectVertex(vAf), projectVertex(vAb), GREEN);
-// drawLine(projectVertex(vBf), projectVertex(vBb), GREEN);
-// drawLine(projectVertex(vCf), projectVertex(vCb), GREEN);
-// drawLine(projectVertex(vDf), projectVertex(vDb), GREEN);
-
-
-// Draw your lines or other primitives here
-// drawLine(P0, P1, {r: 255, g: 0, b: 0});
-// drawLine(P1, P2, {r: 255, g: 0, b: 0});
-// drawLine(P2, P0, {r: 255, g: 0, b: 0});
-// drawShadedTriangle(P0, P1, P2, {r:0, g:255, b:0})
 updateCanvas();

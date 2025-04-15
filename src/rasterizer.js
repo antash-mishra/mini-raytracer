@@ -177,8 +177,6 @@ const swapa = (a, b) => {
 
 // Function to convert viewport coordinates to canvas coordinates
 const viewportToCanvas = (x, y) => {
-
-    console.log(x * sizes.width / 1 , y * sizes.height / 1 )
     return { x: x * sizes.width / 1 | 0,y: y * sizes.height / 1 | 0 }
 }
 
@@ -389,6 +387,42 @@ const renderTriangle = (triangle, projected, vertices) => {
     let v0 = vertices[triangle.v[i0]];
     let v1 = vertices[triangle.v[i1]];
     let v2 = vertices[triangle.v[i2]];
+
+
+    // create normal for this triangle using the vertices
+    // first vector
+    let a = new Vertex(
+        vertices[triangle.v[1]].x - vertices[triangle.v[0]].x, 
+        vertices[triangle.v[1]].y - vertices[triangle.v[0]].y, 
+        vertices[triangle.v[1]].z - vertices[triangle.v[0]].z
+    );
+
+    // second vector
+    let b = new Vertex(
+        vertices[triangle.v[2]].x - vertices[triangle.v[0]].x, 
+        vertices[triangle.v[2]].y - vertices[triangle.v[0]].y, 
+        vertices[triangle.v[2]].z - vertices[triangle.v[0]].z);
+
+    // cross product
+    let normal = new Vertex(
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    );
+    // normalize the normal vector
+    let length = Math.sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    normal.x /= length;
+    normal.y /= length;
+    normal.z /= length;
+
+    // Checking if angle between the normal and the camera is less than 90 degrees or dot product is greater than 0
+    const vertex_to_camera = vertices[triangle.v[0]] - camera.position;
+    const dot_product = normal.x * vertex_to_camera.x + normal.y * vertex_to_camera.y + normal.z * vertex_to_camera.z;
+    if (dot_product < 0) {
+        // console.log("backface culling")
+        return;
+    }
+
 
 
     let p0 = projected[triangle.v[i0]];

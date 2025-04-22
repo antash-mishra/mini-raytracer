@@ -104,6 +104,13 @@ class Triangle {
     }
 }
 
+class Sphere {
+    constructor(divs, color) {
+        this.divs = divs;
+        this.color = color;
+    }
+}
+
 // class to represent a model in 3D space where vertices is the array of vertices in the model
 // triangles is the array of triangles in the model, bounding_center is the center of the bounding sphere
 // and bounding_radius is the radius of the bounding sphere
@@ -163,6 +170,14 @@ class Plane {
     }
 }
 
+class Light {
+    constructor(type, intensity, vector) {
+        this.type = type;
+        this.intensity = intensity;
+        this.vector = vector;
+    }
+}
+
 const P0 = new Point(-200, -250, 0.3);
 const P1 = new Point(200, 50, 0.1);
 const P2 = new Point(20, 250, 1.0);
@@ -183,6 +198,48 @@ const viewportToCanvas = (x, y) => {
 // Function to project a 3D vertex to 2D canvas coordinates
 const projectVertex = (v) => {
     return viewportToCanvas(v.x * d / v.z, v.y * d / v.z)
+}
+
+function GenerateSphere(divs, color) {
+    let vertices = [];
+    let triangles = [];
+
+    let delta_angle = 2.0 * Math.PI / divs;
+    // Generate vertices and normals
+    for (let d=0; d<divs+1; d++) {
+        let y = (2.0 / divs) * (d - divs / 2);
+        let radius = Math.sqrt(1.0 - y * y);
+
+        for (let i=0; i<divs; i++) {
+            let vertex = new Vertex(radius * Math.cos(delta_angle * i), y, radius * Math.sin(delta_angle * i));
+            vertices.push(vertex);
+        }
+    }
+
+    // Generate triangles
+    for (let d=0; d<divs; d++) {
+        for (let i=0; i<divs; i++) {
+            let i0 = d * divs + i;
+            let i1 = (d+1) * divs + (i+1) % divs;
+            let i2 = divs*d + (i+1)%divs;
+            let tri0 = [i0, i1, i2];
+            let tri1 = [i0, i0+divs, i1];
+            triangles.push(new Triangle(tri0, color));
+            triangles.push(new Triangle(tri1, color));
+        }
+    
+    }
+    console.log(vertices, triangles)
+    return new Model("sphere", vertices, triangles, new Vertex(0, 0, 0), 1);
+}
+
+const dot = (a, b) => {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+const magnitude = (v) => {
+    const result = Math.sqrt(dot(v, v))
+    return result;
 }
 
 
@@ -365,6 +422,60 @@ const sortVertices = (vertex_indexes,  projected) => {
     return indexes;
 }
 
+const computeIllumination = (vertex, normal, camera, lights) => {
+    let illumination = 0;
+
+    for (const light of lights) {
+        if (light.type == LT_AMBIENT) {
+            illumination += light.intensity;
+            continue;
+        }
+
+        let vl;
+        if (light.type == LT_DIRECTIONAL) {
+            let cameraMatrix = transposeMatrix(makeOYRotationMatrix(camera.rotation));
+
+            let rotatedLight = multiplyMatrixVector(cameraMatrix, new Vec4(light.vector.x, light.vector.y, light.vector.z, 1));
+            vl = rotatedLight;
+        }
+        else if (light.type == LT_POINT) {
+            let cameraMatrix = multiplyMatrices(
+                makeOYRotationMatrix(camera.rotation), 
+                makeTranslationMatrix(camera.position)
+            );
+            let transformed_light = multiplyMatrixVector(
+                cameraMatrix, 
+                new Vec4(light.vector.x, light.vector.y, light.vector.z, 1)
+            );
+            vl = new Vec4(
+                transformed_light.x - vertex.x,
+                transformed_light.y - vertex.y,
+                transformed_light.z - vertex.z,
+                1
+            )
+        }
+        
+        const n_dot_l = dot(normal, vl);
+
+        if (LM_DIFFUSE) {
+            if (n_dot_l > 0) {
+                illumination += light.intensity * n_dot_l / (magnitude(normal) * magnitude(vl));
+            }
+        }
+
+        if (LM_SPECULAR) {
+            let reflected = { x: 2 * n_dot_l * normal.x - vl.x, y: 2 * n_dot_l * normal.y - vl.y, z: 2 * n_dot_l * normal.z - vl.z };
+            let view = { x: camera.position.x - vertex.x, y: camera.position.y - vertex.y, z: camera.position.z - vertex.z };
+            const cos_beta = dot(reflected, view) / (reflected.length * view.length);
+            if (cos_beta > 0) {
+                let specular = 50
+                illumination += light.intensity * Math.pow(cos_beta, light.specular);
+            }
+        }
+    } 
+    return illumination;
+}
+
 const edgeInterpolate = (y0, v0, y1, v1, y2, v2) => {
     let v01 = interpolate(y0, v0, y1, v1);
     let v12 = interpolate(y1, v1, y2, v2);
@@ -375,12 +486,7 @@ const edgeInterpolate = (y0, v0, y1, v1, y2, v2) => {
 }
 
 const renderTriangle = (triangle, projected, vertices) => {
-    // console.log(projected[triangle.v[0]], triangle.color)
     // sort the vertices from the projected vertices
-    // let p0 = projected[triangle.v[0]];
-    // let p1 = projected[triangle.v[1]];
-    // let p2 = projected[triangle.v[2]];
-    // console.log(triangle)
     let [i0, i1, i2] = sortVertices(triangle.v, projected);
 
     // Vertcies of triangle
@@ -390,6 +496,7 @@ const renderTriangle = (triangle, projected, vertices) => {
 
 
     // create normal for this triangle using the vertices
+    // Using unsorted vertices is ikportant as it will help in finding back and front face properly
     // first vector
     let a = new Vertex(
         vertices[triangle.v[1]].x - vertices[triangle.v[0]].x, 
@@ -415,6 +522,8 @@ const renderTriangle = (triangle, projected, vertices) => {
     normal.y /= length;
     normal.z /= length;
 
+
+
     // Checking if angle between the normal and the camera is less than 90 degrees or dot product is greater than 0
     const vertex_to_camera = vertices[triangle.v[0]] - camera.position;
     const dot_product = normal.x * vertex_to_camera.x + normal.y * vertex_to_camera.y + normal.z * vertex_to_camera.z;
@@ -433,6 +542,17 @@ const renderTriangle = (triangle, projected, vertices) => {
     let [x02, x012] = edgeInterpolate(p0.y, p0.x, p1.y, p1.x, p2.y, p2.x); // for drawing color
     let [z02, z012] = edgeInterpolate(p0.y, 1.0/v0.z, p1.y, 1.0/v1.z, p2.y, 1.0/v2.z); // for depth buffer calculation
 
+
+    // Compute Flat Shading
+    // calculate center of triangle
+    let center = new Vertex(
+        (v0.x + v1.x + v2.x) / 3,
+        (v0.y + v1.y + v2.y) / 3,
+        (v0.z + v1.z + v2.z) / 3
+    );
+    let intensity = computeIllumination(center, normal, camera, lights);
+
+    
     // Determining left and right sides
     let m = (x02.length / 2) | 0;
     if (x02[m] < x012[m]) {
@@ -453,7 +573,7 @@ const renderTriangle = (triangle, projected, vertices) => {
     
         for (let x = xl; x <= xr; x++) {
           if (UpdateDepthBufferIfCloser(x, y, zscan[x - xl])) {
-            putPixel(x, y, triangle.color);
+            putPixel(x, y, {r: triangle.color.r * intensity, g: triangle.color.g * intensity, b: triangle.color.b * intensity});
           }
         }
       }
@@ -699,6 +819,25 @@ const v7 = new Vertex(1, -1, -1)
 
 const vertices = [v0, v1, v2, v3, v4, v5, v6, v7]
 
+// A Light.
+const LT_AMBIENT = 0;
+const LT_POINT = 1;
+const LT_DIRECTIONAL = 2;
+
+const LM_DIFFUSE = 1;
+const LM_SPECULAR = 2;
+
+const SM_FLAT = 0;
+const SM_GOURAUD = 1;
+const SM_PHONG = 2;
+
+const lights = [
+    new Light(LT_AMBIENT, 0.2, new Vertex(0, 0, 0)),
+    new Light(LT_DIRECTIONAL, 0.2, new Vertex(-1, 0, 1)),
+    new Light(LT_POINT, 0.6, new Vertex(-3, 2, -10))
+];
+  
+
 // Triangle index for cube
 const triangle_index = [
     new Triangle([0, 1, 2], RED),
@@ -717,10 +856,11 @@ const triangle_index = [
   
 
 const cubeModel = new Model("cube", vertices, triangle_index, new Vertex(0, 0, 0), Math.sqrt(3));
+
 const cubeA = new Instance(cubeModel, new Transform({x: 0.75,y: 0.75,z: 0.75}, {x: 0, y: 0, z: 0}, {x: -1.5, y: 0, z: 7}))
 const cubeB = new Instance(cubeModel, new Transform({x: 1,y: 1,z: 1}, {x: 0, y: 195, z: 0}, {x: 1.25, y: 2.5, z: 7.5}))
-
-const cubeInstance = [cubeA, cubeB]
+const sphereA = new Instance(GenerateSphere(15, GREEN), new Transform({x: 1.5, y: 1.5, z: 1.5}, {x: 0, y: 0, z: 0}, {x: 1.75, y: -0.5, z: 7}))
+const cubeInstance = [cubeA, cubeB, sphereA]
 
 let camera = new Camera(new Vertex(-3, 1,2), {x: 0, y: -30, z: 0})
 

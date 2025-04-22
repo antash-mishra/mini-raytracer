@@ -98,9 +98,10 @@ class Vertex {
 // class to represent a triangle in 3D space where v is the index of the vertices in the model
 // and color is the color of the triangle
 class Triangle {
-    constructor(v, color) {
+    constructor(v, color, normal) {
         this.v = v;
         this.color = color;
+        this.normal = normal;
     }
 }
 
@@ -224,12 +225,11 @@ function GenerateSphere(divs, color) {
             let i2 = divs*d + (i+1)%divs;
             let tri0 = [i0, i1, i2];
             let tri1 = [i0, i0+divs, i1];
-            triangles.push(new Triangle(tri0, color));
-            triangles.push(new Triangle(tri1, color));
+            triangles.push(new Triangle(tri0, color, [vertices[tri0[0]], vertices[tri0[1]], vertices[tri0[2]]]));
+            triangles.push(new Triangle(tri1, color, [vertices[tri1[0]], vertices[tri1[1]], vertices[tri1[2]]]));
         }
     
     }
-    console.log(vertices, triangles)
     return new Model("sphere", vertices, triangles, new Vertex(0, 0, 0), 1);
 }
 
@@ -485,7 +485,9 @@ const edgeInterpolate = (y0, v0, y1, v1, y2, v2) => {
     return [v02, v012];
 }
 
-const renderTriangle = (triangle, projected, vertices) => {
+let ShadingMode = "SM_GOURARD"
+
+const renderTriangle = (triangle, projected, vertices, instance) => {
     // sort the vertices from the projected vertices
     let [i0, i1, i2] = sortVertices(triangle.v, projected);
 
@@ -524,6 +526,8 @@ const renderTriangle = (triangle, projected, vertices) => {
 
 
 
+
+
     // Checking if angle between the normal and the camera is less than 90 degrees or dot product is greater than 0
     const vertex_to_camera = vertices[triangle.v[0]] - camera.position;
     const dot_product = normal.x * vertex_to_camera.x + normal.y * vertex_to_camera.y + normal.z * vertex_to_camera.z;
@@ -545,22 +549,38 @@ const renderTriangle = (triangle, projected, vertices) => {
 
     // Compute Flat Shading
     // calculate center of triangle
-    let center = new Vertex(
-        (v0.x + v1.x + v2.x) / 3,
-        (v0.y + v1.y + v2.y) / 3,
-        (v0.z + v1.z + v2.z) / 3
-    );
-    let intensity = computeIllumination(center, normal, camera, lights);
-
+    if (ShadingMode == "SM_FLAT") {
+        let center = new Vertex(
+            (v0.x + v1.x + v2.x) / 3,
+            (v0.y + v1.y + v2.y) / 3,
+            (v0.z + v1.z + v2.z) / 3
+        );
+        let intensity = computeIllumination(center, normal, camera, lights);
+    } else if (ShadingMode == "SM_GOURARD") {
+        // Compute Normal for each vertex
+        console.log(instance)
+        let transform = multiplyMatrices(transposeMatrix(makeOYRotationMatrix(camera.rotation)), makeOYRotationMatrix(instance.transform.rotation));
+        var normal0 = multiplyMatrixVector(transform, new Vec4(triangle.normal[i0].x, triangle.normal[i0].y, triangle.normal[i0].z, 0));
+        var normal1 = multiplyMatrixVector(transform, new Vec4(triangle.normal[i1].x, triangle.normal[i1].y, triangle.normal[i1].z, 0));
+        var normal2 = multiplyMatrixVector(transform, new Vec4(triangle.normal[i2].x, triangle.normal[i2].y, triangle.normal[i2].z, 0));
+        
+        // Compute lighting at each vertex and interpolate
+        let intensity0 = computeIllumination(v0, normal0, camera, lights);
+        let intensity1 = computeIllumination(v1, normal1, camera, lights);
+        let intensity2 = computeIllumination(v2, normal2, camera, lights);
+        var [i02, i012] = edgeInterpolate(p0.y, intensity0, p1.y, intensity1, p2.y, intensity2);
+    }
     
     // Determining left and right sides
     let m = (x02.length / 2) | 0;
     if (x02[m] < x012[m]) {
         var [x_left, x_right] = [x02, x012];
         var [iz_left, iz_right] = [z02, z012];
+        var [i_left, i_right] = [i02, i012];
       } else {
         var [x_left, x_right] = [x012, x02];
         var [iz_left, iz_right] = [z012, z02];
+        var [i_left, i_right] = [i012, i02];
       }
     
       // Draw horizontal segments.
@@ -570,9 +590,19 @@ const renderTriangle = (triangle, projected, vertices) => {
         // Interpolate attributes for this scanline.
         let [zl, zr] = [iz_left[y - p0.y], iz_right[y - p0.y]];
         let zscan = interpolate(xl, zl, xr, zr);
+
+        let iscan;
+
+        if (ShadingMode == "SM_GOURARD") {
+            let [il, ir] = [i_left[y - p0.y], i_right[y - p0.y]];
+            iscan = interpolate(xl, il, xr, ir);
+        } else {
+            iscan = [triangle.color.r, triangle.color.g, triangle.color.b];
+        }
     
         for (let x = xl; x <= xr; x++) {
           if (UpdateDepthBufferIfCloser(x, y, zscan[x - xl])) {
+            let intensity = iscan[x - xl];
             putPixel(x, y, {r: triangle.color.r * intensity, g: triangle.color.g * intensity, b: triangle.color.b * intensity});
           }
         }
@@ -766,9 +796,9 @@ const makeCameraMatrix = (position, rotation) => {
     return cameraMatrix;
 }
 
-const renderObject = (instance) => {
+const renderObject = (model, instance) => {
     let projected = []
-    const instancedModel = instance;
+    const instancedModel = model;
     // console.log(instancedModel)
     
     for (const vertex of instancedModel.vertices) {
@@ -783,7 +813,7 @@ const renderObject = (instance) => {
 
     for (const triangle of instancedModel.triangles) {
         // console.log(triangle)
-        renderTriangle(triangle, projected, instancedModel.vertices);
+        renderTriangle(triangle, projected, instancedModel.vertices, instance);
     }
 }
 
@@ -802,7 +832,7 @@ const renderScene = () => {
         let transformMatrix = multiplyMatrices(cameraMatrix, cubeTransformMatrix);
         let clipped_cube_model = clipInstance(cube.model, clipping_planes, transformMatrix, cube.transform.scale);
         if (clipped_cube_model != null) {
-            renderObject(clipped_cube_model);
+            renderObject(clipped_cube_model, cube);
         }
     }
 }
@@ -840,18 +870,18 @@ const lights = [
 
 // Triangle index for cube
 const triangle_index = [
-    new Triangle([0, 1, 2], RED),
-    new Triangle([0, 2, 3], RED),
-    new Triangle([1, 5, 6], YELLOW),
-    new Triangle([1, 6, 2], YELLOW),
-    new Triangle([2, 6, 7], CYAN),
-    new Triangle([2, 7, 3], CYAN),
-    new Triangle([4, 0, 3], GREEN),
-    new Triangle([4, 1, 0], PURPLE),
-    new Triangle([4, 3, 7], GREEN),
-    new Triangle([4, 5, 1], PURPLE),
-    new Triangle([5, 4, 7], BLUE),
-    new Triangle([5, 7, 6], BLUE),
+    new Triangle([0, 1, 2], RED,    [new Vertex( 0,  0,  1), new Vertex( 0,  0,  1), new Vertex( 0,  0,  1)]),
+    new Triangle([0, 2, 3], RED,    [new Vertex( 0,  0,  1), new Vertex( 0,  0,  1), new Vertex( 0,  0,  1)]),
+    new Triangle([4, 0, 3], GREEN,  [new Vertex( 1,  0,  0), new Vertex( 1,  0,  0), new Vertex( 1,  0,  0)]),
+    new Triangle([4, 3, 7], GREEN,  [new Vertex( 1,  0,  0), new Vertex( 1,  0,  0), new Vertex( 1,  0,  0)]),
+    new Triangle([5, 4, 7], BLUE,   [new Vertex( 0,  0, -1), new Vertex( 0,  0, -1), new Vertex( 0,  0, -1)]),
+    new Triangle([5, 7, 6], BLUE,   [new Vertex( 0,  0, -1), new Vertex( 0,  0, -1), new Vertex( 0,  0, -1)]),
+    new Triangle([1, 5, 6], YELLOW, [new Vertex(-1,  0,  0), new Vertex(-1,  0,  0), new Vertex(-1,  0,  0)]),
+    new Triangle([1, 6, 2], YELLOW, [new Vertex(-1,  0,  0), new Vertex(-1,  0,  0), new Vertex(-1,  0,  0)]),
+    new Triangle([1, 0, 5], PURPLE, [new Vertex( 0,  1,  0), new Vertex( 0,  1,  0), new Vertex( 0,  1,  0)]),
+    new Triangle([5, 0, 4], PURPLE, [new Vertex( 0,  1,  0), new Vertex( 0,  1,  0), new Vertex( 0,  1,  0)]),
+    new Triangle([2, 6, 7], CYAN,   [new Vertex( 0, -1,  0), new Vertex( 0, -1,  0), new Vertex( 0, -1,  0)]),
+    new Triangle([2, 7, 3], CYAN,   [new Vertex( 0, -1,  0), new Vertex( 0, -1,  0), new Vertex( 0, -1,  0)]),
   ];
   
 
@@ -873,8 +903,6 @@ const clipping_planes = [
     new Plane(new Vertex(0,-s2,s2), 0), // top
     new Plane(new Vertex(0,s2,s2), 0), // bottom
 ]
-
-console.log(depth_buffer)
 
 renderScene()
 

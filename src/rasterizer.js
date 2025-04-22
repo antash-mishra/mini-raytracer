@@ -14,6 +14,7 @@ const CYAN = {r:0, g:255, b:255};
 
 // distnace between viewport and camera in z axis 
 const d = 1;
+const viewport_size = 1;
 
 // canvas
 const canvas = document.getElementById("canvas");
@@ -194,6 +195,14 @@ const swapa = (a, b) => {
 // Function to convert viewport coordinates to canvas coordinates
 const viewportToCanvas = (x, y) => {
     return { x: x * sizes.width / 1 | 0,y: y * sizes.height / 1 | 0 }
+}
+
+// Converts 2D canvas coordinates to 2D viewport coordinates.
+function canvasToViewport(p2d) {
+    return {
+      x: p2d.x * viewport_size / canvas.width,
+      y: p2d.y * viewport_size / canvas.height
+    }
 }
 
 // Function to project a 3D vertex to 2D canvas coordinates
@@ -485,7 +494,15 @@ const edgeInterpolate = (y0, v0, y1, v1, y2, v2) => {
     return [v02, v012];
 }
 
-let ShadingMode = "SM_GOURARD"
+function UnProjectVertex(x, y, inv_z) {
+    let oz = 1.0 / inv_z;
+    let ux = x*oz / d;
+    let uy = y*oz / d;
+    let p2d = canvasToViewport({x: ux, y: uy});
+    return {x: p2d.x, y: p2d.uy, z: oz};
+}
+
+let ShadingMode = "SM_PHONG"
 
 const renderTriangle = (triangle, projected, vertices, instance) => {
     // sort the vertices from the projected vertices
@@ -569,7 +586,19 @@ const renderTriangle = (triangle, projected, vertices, instance) => {
         let intensity1 = computeIllumination(v1, normal1, camera, lights);
         let intensity2 = computeIllumination(v2, normal2, camera, lights);
         var [i02, i012] = edgeInterpolate(p0.y, intensity0, p1.y, intensity1, p2.y, intensity2);
+    } else if (ShadingMode == "SM_PHONG") {
+        // Compute Normal for each vertex
+        let transform = multiplyMatrices(transposeMatrix(makeOYRotationMatrix(camera.rotation)), makeOYRotationMatrix(instance.transform.rotation));
+        var normal0 = multiplyMatrixVector(transform, new Vec4(triangle.normal[i0].x, triangle.normal[i0].y, triangle.normal[i0].z, 0));
+        var normal1 = multiplyMatrixVector(transform, new Vec4(triangle.normal[i1].x, triangle.normal[i1].y, triangle.normal[i1].z, 0));
+        var normal2 = multiplyMatrixVector(transform, new Vec4(triangle.normal[i2].x, triangle.normal[i2].y, triangle.normal[i2].z, 0));
+
+        // Compute lighting INTENSITY at each vertex and interpolate
+        var [nx02, nx012] = edgeInterpolate(p0.y, normal0.x, p1.y, normal1.x, p2.y, normal2.x);
+        var [ny02, ny012] = edgeInterpolate(p0.y, normal0.y, p1.y, normal1.y, p2.y, normal2.y);
+        var [nz02, nz012] = edgeInterpolate(p0.y, normal0.z, p1.y, normal1.z, p2.y, normal2.z);
     }
+
     
     // Determining left and right sides
     let m = (x02.length / 2) | 0;
@@ -577,10 +606,18 @@ const renderTriangle = (triangle, projected, vertices, instance) => {
         var [x_left, x_right] = [x02, x012];
         var [iz_left, iz_right] = [z02, z012];
         var [i_left, i_right] = [i02, i012];
+
+        var [nx_left, nx_right] = [nx02, nx012];
+        var [ny_left, ny_right] = [ny02, ny012];
+        var [nz_left, nz_right] = [nz02, nz012];
       } else {
         var [x_left, x_right] = [x012, x02];
         var [iz_left, iz_right] = [z012, z02];
         var [i_left, i_right] = [i012, i02];
+
+        var [nx_left, nx_right] = [nx012, nx02];
+        var [ny_left, ny_right] = [ny012, ny02];
+        var [nz_left, nz_right] = [nz012, nz02];
       }
     
       // Draw horizontal segments.
@@ -591,19 +628,34 @@ const renderTriangle = (triangle, projected, vertices, instance) => {
         let [zl, zr] = [iz_left[y - p0.y], iz_right[y - p0.y]];
         let zscan = interpolate(xl, zl, xr, zr);
 
-        let iscan;
+        let iscan, nxscan, nyscan, nzscan;
 
         if (ShadingMode == "SM_GOURARD") {
             let [il, ir] = [i_left[y - p0.y], i_right[y - p0.y]];
             iscan = interpolate(xl, il, xr, ir);
+        } else if (ShadingMode == "SM_PHONG") {
+            let [nxl, nxr] = [nx_left[y - p0.y], nx_right[y - p0.y]];
+            let [nyl, nyr] = [ny_left[y - p0.y], ny_right[y - p0.y]];
+            let [nzl, nzr] = [nz_left[y - p0.y], nz_right[y - p0.y]];
+            
+            nxscan = interpolate(xl, nxl, xr, nxr);
+            nyscan = interpolate(xl, nyl, xr, nyr);
+            nzscan = interpolate(xl, nzl, xr, nzr);
         } else {
             iscan = [triangle.color.r, triangle.color.g, triangle.color.b];
         }
     
         for (let x = xl; x <= xr; x++) {
           if (UpdateDepthBufferIfCloser(x, y, zscan[x - xl])) {
-            let intensity = iscan[x - xl];
-            putPixel(x, y, {r: triangle.color.r * intensity, g: triangle.color.g * intensity, b: triangle.color.b * intensity});
+            if (ShadingMode == "SM_GOURARD") {
+                let intensity = iscan[x - xl];
+                putPixel(x, y, {r: triangle.color.r * intensity, g: triangle.color.g * intensity, b: triangle.color.b * intensity});
+            } else if (ShadingMode == "SM_PHONG") {
+                let vertex = UnProjectVertex(x, y, zscan[x - xl]);
+                let normal = new Vertex(nxscan[x - xl], nyscan[x - xl], nzscan[x - xl]);
+                let intensity = computeIllumination(vertex, normal, camera, lights);      
+                putPixel(x, y, {r: triangle.color.r * intensity, g: triangle.color.g * intensity, b: triangle.color.b * intensity});
+            }
           }
         }
       }
